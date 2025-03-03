@@ -2,60 +2,45 @@ name: Sync Releases
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天 UTC 时间 0 点自动运行
-  workflow_dispatch:    # 支持手动触发
+    - cron: '0 2 * * *'  # 每天凌晨 2 点执行
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
-  sync-releases:
+  sync:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: 安装依赖
-      run: sudo apt-get install -y jq
+      - name: Get latest release from upstream
+        id: get_release
+        run: |
+          LATEST_RELEASE=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/latest | jq -r '.tag_name')
+          echo "LATEST_RELEASE=${LATEST_RELEASE}" >> $GITHUB_ENV
 
-    - name: 获取对方最新 Release
-      env:
-        UPSTREAM_REPO: portapps/android-studio-portable
-      run: |
-        response=$(curl -s "https://api.github.com/repos/$UPSTREAM_REPO/releases/latest")
-        echo "$response" > upstream_release.json
-        echo "TAG_NAME=$(jq -r '.tag_name' upstream_release.json)" >> $GITHUB_ENV
-        echo "BODY=$(jq -r '.body' upstream_release.json)" >> $GITHUB_ENV
-        jq -r '.assets[].browser_download_url' upstream_release.json > assets.txt
-
-    - name: 检查是否已存在
-      run: |
-        if curl -s -I "https://github.com/klcb2010/android-studio-portable/releases/tag/$TAG_NAME" | grep -q 'HTTP/2 200'; then
-          echo "RELEASE_EXISTS=true" >> $GITHUB_ENV
-        else
-          echo "RELEASE_EXISTS=false" >> $GITHUB_ENV
-        fi
-
-    - name: 创建 Release 并上传文件
-      if: env.RELEASE_EXISTS == 'false'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        # 创建 Release
-        response=$(curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"$TAG_NAME\",\"body\":\"$BODY\"}" \
-          "https://api.github.com/repos/klcb2010/android-studio-portable/releases")
-        
-        upload_url=$(echo $response | jq -r '.upload_url' | cut -d'{' -f1)
-
-        # 上传 Assets
-        while read asset_url; do
-          if [ -n "$asset_url" ]; then
-            filename=$(basename "$asset_url")
-            curl -s -L -o $filename "$asset_url"
-            curl -s -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/octet-stream" \
-              --data-binary @$filename \
-              "$upload_url?name=$filename"
+      - name: Check if release exists
+        run: |
+          if curl -s https://api.github.com/repos/klcb2010/android-studio-portable/releases | jq -r '.[].tag_name' | grep -q "${{ env.LATEST_RELEASE }}"; then
+            echo "Release already exists. Skipping."
+            exit 0
           fi
-        done < assets.txt
+
+      - name: Download assets
+        run: |
+          RELEASE_ID=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/latest | jq -r '.id')
+          ASSETS=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/${RELEASE_ID} | jq -r '.assets[].browser_download_url')
+          mkdir -p assets
+          for url in $ASSETS; do
+            wget -P assets "$url"
+          done
+
+      - name: Create a new release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ env.LATEST_RELEASE }}
+          name: ${{ env.LATEST_RELEASE }}
+          body: "Synchronized from upstream."
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: "assets/*"
