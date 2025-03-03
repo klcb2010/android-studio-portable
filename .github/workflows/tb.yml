@@ -1,41 +1,61 @@
-name: Sync Releases from Upstream 
- 
-# 触发条件，可以设置定时执行或者手动触发 
-on: 
-  # 手动触发 
-  workflow_dispatch: 
-  # 定时触发，例如每天凌晨 2 点 
-  schedule: 
-    - cron: '0 2 * * *' 
- 
-jobs: 
-  sync-releases: 
-    runs-on: ubuntu-latest 
- 
-    steps: 
-      # 步骤 1: 检出自己的仓库代码 
-      - name: Checkout my repository 
-        uses: actions/checkout@v3 
-        with: 
-          repository: klcb2010/android-studio-portable 
-          token: ${{ secrets.GITHUB_TOKEN }} 
-          ref: master 
- 
-      # 步骤 2: 添加对方仓库为远程仓库 
-      - name: Add upstream repository 
-        run: | 
-          git remote add upstream https://github.com/portapps/android-studio-portable.git  
-          git fetch upstream 
- 
-      # 步骤 3: 拉取对方仓库的最新标签 
-      - name: Fetch latest tags from upstream 
-        run: git fetch upstream --tags 
- 
-      # 步骤 4: 合并对方仓库的 master 分支到本地 master 分支 
-      - name: Merge upstream master into local master 
-        run: | 
-          git merge upstream/master --allow-unrelated-histories -m "Merge latest changes from upstream" 
- 
-      # 步骤 5: 推送更新到自己的仓库 
-      - name: Push changes to my repository 
-        run: git push origin master 
+name: Sync Releases
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天 UTC 时间 0 点自动运行
+  workflow_dispatch:    # 支持手动触发
+
+jobs:
+  sync-releases:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: 安装依赖
+      run: sudo apt-get install -y jq
+
+    - name: 获取对方最新 Release
+      env:
+        UPSTREAM_REPO: portapps/android-studio-portable
+      run: |
+        response=$(curl -s "https://api.github.com/repos/$UPSTREAM_REPO/releases/latest")
+        echo "$response" > upstream_release.json
+        echo "TAG_NAME=$(jq -r '.tag_name' upstream_release.json)" >> $GITHUB_ENV
+        echo "BODY=$(jq -r '.body' upstream_release.json)" >> $GITHUB_ENV
+        jq -r '.assets[].browser_download_url' upstream_release.json > assets.txt
+
+    - name: 检查是否已存在
+      run: |
+        if curl -s -I "https://github.com/klcb2010/android-studio-portable/releases/tag/$TAG_NAME" | grep -q 'HTTP/2 200'; then
+          echo "RELEASE_EXISTS=true" >> $GITHUB_ENV
+        else
+          echo "RELEASE_EXISTS=false" >> $GITHUB_ENV
+        fi
+
+    - name: 创建 Release 并上传文件
+      if: env.RELEASE_EXISTS == 'false'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # 创建 Release
+        response=$(curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"tag_name\":\"$TAG_NAME\",\"name\":\"$TAG_NAME\",\"body\":\"$BODY\"}" \
+          "https://api.github.com/repos/klcb2010/android-studio-portable/releases")
+        
+        upload_url=$(echo $response | jq -r '.upload_url' | cut -d'{' -f1)
+
+        # 上传 Assets
+        while read asset_url; do
+          if [ -n "$asset_url" ]; then
+            filename=$(basename "$asset_url")
+            curl -s -L -o $filename "$asset_url"
+            curl -s -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @$filename \
+              "$upload_url?name=$filename"
+          fi
+        done < assets.txt
