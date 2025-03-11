@@ -18,15 +18,18 @@ jobs:
           LATEST_RELEASE=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/latest | jq -r '.tag_name')
           echo "LATEST_RELEASE=${LATEST_RELEASE}" >> $GITHUB_ENV
 
-      - name: Check if release exists
+      - name: Check if this release is already synced
         run: |
-          if curl -s https://api.github.com/repos/klcb2010/android-studio-portable/releases | jq -r '.[].tag_name' | grep -q "${{ env.LATEST_RELEASE }}"; then
-            echo "Release already exists. Skipping."
+          echo "Checking if release ${LATEST_RELEASE} already exists in current repo..."
+          EXISTING_TAGS=$(curl -s https://api.github.com/repos/klcb2010/android-studio-portable/releases | jq -r '.[].tag_name')
+          if echo "$EXISTING_TAGS" | grep -Fxq "${LATEST_RELEASE}"; then
+            echo "Release ${LATEST_RELEASE} already exists. Skipping sync."
             exit 0
           fi
 
-      - name: Download assets
+      - name: Download assets from upstream
         run: |
+          echo "Downloading assets for ${LATEST_RELEASE}..."
           RELEASE_ID=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/latest | jq -r '.id')
           ASSETS=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/${RELEASE_ID} | jq -r '.assets[].browser_download_url')
           mkdir -p assets
@@ -34,7 +37,7 @@ jobs:
             wget -P assets "$url"
           done
 
-      - name: Create a new release
+      - name: Create a new release in this repo
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.LATEST_RELEASE }}
@@ -42,5 +45,6 @@ jobs:
           body: "Synchronized from upstream."
           draft: false
           prerelease: false
+          allowUpdates: false  # 避免重复覆盖
           token: ${{ secrets.GITHUB_TOKEN }}
           artifacts: "assets/*"
