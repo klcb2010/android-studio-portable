@@ -19,15 +19,20 @@ jobs:
           echo "LATEST_RELEASE=${LATEST_RELEASE}" >> $GITHUB_ENV
 
       - name: Check if this release is already synced
+        id: check_release
         run: |
           echo "Checking if release ${LATEST_RELEASE} already exists in current repo..."
           EXISTING_TAGS=$(curl -s https://api.github.com/repos/klcb2010/android-studio-portable/releases | jq -r '.[].tag_name')
           if echo "$EXISTING_TAGS" | grep -Fxq "${LATEST_RELEASE}"; then
             echo "Release ${LATEST_RELEASE} already exists. Skipping sync."
-            exit 0
+            echo "RELEASE_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "Release ${LATEST_RELEASE} does not exist. Proceeding with sync."
+            echo "RELEASE_EXISTS=false" >> $GITHUB_ENV
           fi
 
       - name: Download assets from upstream
+        if: env.RELEASE_EXISTS == 'false'
         run: |
           echo "Downloading assets for ${LATEST_RELEASE}..."
           RELEASE_ID=$(curl -s https://api.github.com/repos/portapps/android-studio-portable/releases/latest | jq -r '.id')
@@ -38,6 +43,7 @@ jobs:
           done
 
       - name: Create a new release in this repo
+        if: env.RELEASE_EXISTS == 'false'
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ env.LATEST_RELEASE }}
