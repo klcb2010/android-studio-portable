@@ -1,0 +1,18 @@
+document.getElementById('save').addEventListener('click', () => {
+  const token = document.getElementById('token').value.trim();
+  if (!token) {
+    alert('请输入有效的 Token！');
+    return;
+  }
+  browser.storage.sync.set({ githubToken: token }).then(() => {
+    alert('Token 已保存！');
+  }).catch(err => {
+    alert('保存失败：' + err);
+  });
+});
+
+browser.storage.sync.get('githubToken').then(data => {
+  document.getElementById('token').value = data.githubToken || '';
+}).catch(err => {
+  console.error('读取 Token 失败：', err);
+});
