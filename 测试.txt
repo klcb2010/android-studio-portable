@@ -1,1 +1,17 @@
-咚咚咚大胆
+{
+  "manifest_version": 2,
+  "name": "复制标签地址",
+  "version": "1.0",
+  "description": "右键点击标签页，快速复制其地址",
+  "permissions": [
+    "contextMenus",
+    "tabs",
+    "clipboardWrite"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "icons": {
+    "16": "icon/transparent.png"
+  }
+}
